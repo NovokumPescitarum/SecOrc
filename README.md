@@ -1,4 +1,4 @@
-# README.md for Wazuh Alert Integration System
+# Wazuh Alert Integration System
 
 ## Overview
 This system integrates Wazuh alerts with TheHive and MISP to manage and correlate security alerts effectively. It is designed to be modular, allowing for easy adaptation to various security environments. The integration facilitates the automation of alert processing, searching for hash matches in MISP, and case creation in TheHive based on these matches.
