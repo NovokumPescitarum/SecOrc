@@ -44,7 +44,37 @@ The server will start in debug mode and listen for incoming webhook requests.
 
 ## Usage
 Send JSON payloads from Wazuh to the `/webhook` endpoint configured in `routes.py`. The system will process these alerts, search for hash matches in MISP, and automatically create alerts and cases in TheHive.
+## Configuring Wazuh to Send Webhook Notifications
 
+To enable Wazuh to send webhook notifications to our Flask application, you need to add a new integration in the `ossec.conf` configuration file of your Wazuh manager. This setup allows Wazuh to send alerts (with a level of 3 or higher, as recommended) to the Flask application via a webhook.
+
+Here’s how to configure this in your `/var/ossec/etc/ossec.conf`:
+
+```xml
+<integration>
+    <name>custom-webhook</name>
+    <hook_url>http://<your_flask_server_ip>:<port>/webhook</hook_url>
+    <alert_format>json</alert_format>
+    <level>3</level>
+</integration>
+```
+
+### Configuration Details:
+- **name**: This should be `custom-webhook` or any other name you choose that describes the integration.
+- **hook_url**: Replace `<your_flask_server_ip>` and `<port>` with the IP address and port number where your Flask application is running.
+- **alert_format**: Set to `json` as the Flask endpoint expects JSON data.
+- **level**: Setting this to `3` means that all alerts of level 3 and above will be sent. Adjust this value based on the sensitivity and volume of alerts you wish to process.
+
+### Adding to ossec.conf:
+Insert the above XML configuration into the `ossec.conf` file located typically in `/var/ossec/etc/ossec.conf` on your Wazuh manager. Ensure it is placed within the `<ossec_config>` root configuration tag.
+
+### Restart Wazuh Manager:
+After updating the configuration, restart the Wazuh manager to apply changes:
+```bash
+service wazuh-manager restart
+```
+
+This configuration ensures that alerts of level 3 and above are automatically sent to your Flask application, enabling automated processing and integration with TheHive and MISP. Adjust the alert level according to your organizational needs to either increase or reduce the number of alerts processed by the system.
 ## Modularity and Configuration
 This application is designed to be highly modular. Future configurations can be made to adapt to different types of data inputs and to refine the data that triggers alerts or cases.
 
