@@ -1,7 +1,7 @@
 from thehive4py.api import TheHiveApi
 from thehive4py.models import Alert, AlertArtifact,Case
 from config import Config
-from misp import search_hashes_in_misp
+from misp import search_iocs_in_misp
 from utils import parse_hash_data
 import logging
 
@@ -36,11 +36,29 @@ def generate_artifacts(alert_data):
     title_tag = alert_data.get('title', 'Wazuh Alert')
     exclude_keys = {'severity', 'title', 'description', 'all_fields_data_win_eventdata_hashes'}
     artifacts = []
-    logging.info(f"Generating artifacts for alert: {title_tag}")
     for key, value in alert_data.items():
         if key not in exclude_keys and value:
             artifacts.append(AlertArtifact(dataType='other', data=str(value), tags=[key]))
-    # Consider adding handling for hash data if needed
+
+    # Include artifacts for the new IOCs
+    source_ip = alert_data.get('all_fields_agent_ip', 'N/A')
+    destination_ip = alert_data.get('all_fields_data_win_eventdata_destinationIp', 'N/A')
+    url = alert_data.get('url', 'N/A')
+    file_path = alert_data.get('all_fields_data_win_eventdata_image', 'N/A')
+    md5_hashes = parse_hash_data(alert_data.get('all_fields_data_win_eventdata_hashes', '')).get('md5', [])
+
+    # Append artifacts for new IOCs if they exist
+    if source_ip:
+        artifacts.append(AlertArtifact(dataType='other', data=source_ip, tags=['source_ip']))
+    if destination_ip:
+        artifacts.append(AlertArtifact(dataType='other', data=destination_ip, tags=['destination_ip']))
+    if url:
+        artifacts.append(AlertArtifact(dataType='other', data=url, tags=['url']))
+    if file_path:
+        artifacts.append(AlertArtifact(dataType='other', data=file_path, tags=['file_path']))
+    for md5_hash in md5_hashes:
+        artifacts.append(AlertArtifact(dataType='other', data=md5_hash, tags=['md5_hash']))
+
     return artifacts
 
 def submit_alert(alert):
@@ -63,12 +81,34 @@ def create_alert(alert_data, alert_id):
         submitted, submit_response = submit_alert(alert)
         if submitted:
             logging.info(f"Alert {alert_id} successfully processed and submitted.")
+            # Extract additional IOCs from the alert data
+            source_ip = alert_data.get('all_fields_agent_ip', '')
+            destination_ip = alert_data.get('all_fields_data_win_eventdata_destinationIp', '')
+            url = alert_data.get('url', '')
+            file_path = alert_data.get('all_fields_data_win_eventdata_image', '')
             hash_data_string = alert_data.get('all_fields_data_win_eventdata_hashes', '')
-            hash_data = parse_hash_data(hash_data_string)
-            found_hashes = search_hashes_in_misp(hash_data)
+
+            # Extract hashes using parse_hash_data function
+            hashes = parse_hash_data(hash_data_string)
+
+
+            # Search for additional IOCs in MISP
+            found_iocs = search_iocs_in_misp({
+                'source_ip': [source_ip],
+                'destination_ip': [destination_ip],
+                'url': [url],
+                'file_path': [file_path],
+                'md5_hash': hashes.get('md5', []),
+                'sha256_hash': hashes.get('sha256', []),
+                'imphash': hashes.get('imphash', [])
+            })
+
+            if found_iocs:
+                logging.info("Found IOCs in MISP, creating case...")
+            else:
+                logging.info("No IOCs found in MISP.")
             observables = alert.artifacts
-            if found_hashes:
-                create_case_from_alert(alert, found_hashes, observables)
+            create_case_from_alert(alert, found_iocs, source_ip, destination_ip, url, file_path, observables)
         else:
             logging.error(f"Failure in processing or submitting alert {alert_id}")
         return submit_response
@@ -76,19 +116,20 @@ def create_alert(alert_data, alert_id):
         logging.error(f"Exception in create_alert for {alert_id}: {e}")
         return None
 
-def create_case_from_alert(alert, found_hashes, observables):
+def create_case_from_alert(alert, found_hashes, source_ip, destination_ip, url, file_path, observables):
     """ Create a case in TheHive from an alert including observables. """
-    if not found_hashes:
-        logging.info("No matching hashes found in MISP, case creation not triggered.")
-        return None
-
     try:
+        if not found_hashes:
+            logging.info("No matching hashes found in MISP, case creation not triggered.")
+            return None
+
         hash_details = '\n'.join([f"Found {hash_info['type']}: {hash_info['value']} in MISP" for hash_info in found_hashes])
         case_description = f"{alert.description}\n\n**Hash Matches Found in MISP:**\n{hash_details}"
-        
+    
+
         # Initialize observables list for the case
         case_observables = [AlertArtifact(dataType=ob.dataType, data=ob.data, tags=ob.tags) for ob in observables]
-        
+
         case = Case(
             title=alert.title,
             description=case_description,
@@ -108,3 +149,4 @@ def create_case_from_alert(alert, found_hashes, observables):
     except Exception as e:
         logging.error(f"Exception when creating case from alert {alert.sourceRef}: {e}")
         return None
+
